@@ -44,162 +44,209 @@ const int led = 5;
 
 // 0 = cold, 255 = warm
 int colortemp = 122;
-int colortemp_HA = 0;
+int colortemp_HA = 122;
 
 // initial brightness
-int brightness = 122;
-int brightness_HA = 0;
+int brightness = 80;
+int brightness_HA = 80;
 
+// state change
+String light_state = "OFF";
 
-//Encoder 1
+// Encoder 1
 int encoder1Val = 0;
 long enc1_valset = 0;
 long last_button1 = 0;
 
-//Encoder 2
+// Encoder 2
 int encoder2Val = 0;
 long enc2_valset = 0;
 long last_button2 = 0;
 
+// var for setting initial values in HA after reboot
+boolean reboot = true;
+
 //------------- fcns encoders --------------------------
 
+// brightness-encoder
 void IRAM_ATTR isr_encoder1() {
 
   if (digitalRead(enc1_p2) == HIGH)
     {
       //clockwise
-      brightness += 1;
-    } else if (brightness > 0) {
+      if (brightness < 251){
+        brightness += 4;
+      } else{
+        brightness = 255;
+      }   
+    } 
+  else 
+    {
       //anticlockwise
-      brightness -= 1;
+      if (brightness > 3){
+        brightness -= 4;
+      } else{
+        brightness = 0;
+      }  
     }
 
   enc1_valset = millis();
   Serial.println("Brightness: " + String(brightness));
 }
 
+
+// button brightness-encoder
 void IRAM_ATTR isr_button1() {
 
   long cTime = millis();
   if (cTime >= (last_button1 + 50)){
 
-    Serial.println("BUTTON 1");
+    if (light_state == "OFF"){
+      light_state = "ON";
+    } else if (light_state == "ON"){
+      light_state = "OFF";
+    }
+    
+    char feedback[10];
+    light_state.toCharArray(feedback, 10);
+    client.publish("home/office/desk/deskesp/switch_mqtt", feedback);
+
+    Serial.println("State: " + light_state);
+
     last_button1 = cTime;
-
   }
-
 }
 
+
+// colortemp-encoder
 void IRAM_ATTR isr_encoder2() {
 
   if (digitalRead(enc2_p2) == HIGH)
     {
       //clockwise
-      colortemp += 1;
-    } else if (colortemp > 0) {
+      if (colortemp < 251){
+        colortemp += 4;
+      } else{
+        colortemp = 255;
+      }
+    } 
+  else 
+    {
       //anticlockwise
-      colortemp -= 1;
+      if (colortemp > 3){
+        colortemp -= 4;
+      } else{
+        colortemp = 0;
+      } 
     }
 
   enc2_valset = millis();
   Serial.println("Colortemp: " + String(colortemp));
 }
 
+
+// button colortemp-encoder
 void IRAM_ATTR isr_button2() {
 
   long cTime = millis();
-  if (cTime >= (last_button2 + 50)){
-
+  if (cTime >= (last_button2 + 50))
+  {
     Serial.println("BUTTON 2");
     last_button2 = cTime;
-
   }
-
 }
 
 
 // ----------------------------------- fcns mqtt ------------------------------------------------------
 
-
-// FCNs LED-Strip
-void stripON(){
-
-  analogWrite(led, brightness);
+// update brightness in HA
+void ha_update_brightness(){
   String helpVal = (String)brightness;
   char feedback[10];
   helpVal.toCharArray(feedback, 10);
-  client.publish("home/office/desk/deskesp/feedback", feedback);
+  client.publish("home/office/desk/deskesp/brightness_mqtt", feedback);
+  brightness_HA = brightness; 
 }
 
-void stripOFF(){
-  
-  analogWrite(led, 0);
-  char feedback[5] = "0";
-  client.publish("home/office/desk/deskesp/feedback", feedback);
-}
 
-void setBright(){
-  
-  analogWrite(led, brightness);
-  String helpVal = (String)brightness;
+// update colortemp in HA
+void ha_update_colortemp(){
+  String helpVal = (String)colortemp;
   char feedback[10];
   helpVal.toCharArray(feedback, 10);
-  client.publish("home/office/desk/deskesp/feedback", feedback);
+  client.publish("home/office/desk/deskesp/colortemp_mqtt", feedback);
+  colortemp_HA = colortemp;
 }
+
 
 // Callback MQTT
 void callback(char* topic, byte* payload, unsigned int length) {
  
- if (strcmp(topic,"home/office/desk/deskesp/switch")==0){
-  for (int i=0;i<length;i++) {
-   receivedString += (char)payload[i];
+  if (strcmp(topic,"home/office/desk/deskesp/switch_ha")==0){
+    for (int i=0;i<length;i++) {
+     receivedString += (char)payload[i];
+    }
 
+    light_state = receivedString;
+    Serial.println("State: " + light_state);
 
-   if (receivedString == "ON"){
-     stripON();
-   }
+    char feedback[10];
+    light_state.toCharArray(feedback, 10);
+    client.publish("home/office/desk/deskesp/switch_mqtt", feedback);
 
-   if (receivedString == "OFF"){
-     stripOFF();
-   }
+    receivedString = "";
   }
-  receivedString = "";
- }
 
- if (strcmp(topic,"home/office/desk/deskesp/brightness")==0){
+  if (strcmp(topic,"home/office/desk/deskesp/brightness_ha")==0){
+   
+    for (int i=0;i<length;i++) {
+     receivedString += (char)payload[i];
+    }
+
+    brightness = receivedString.toInt();
+    Serial.println("Brightness: " + String(brightness));
+
+    receivedString = "";
+  }
+
+  if (strcmp(topic,"home/office/desk/deskesp/colortemp_ha")==0){
  
-  for (int i=0;i<length;i++) {
-   receivedString += (char)payload[i];
-  }
-  
-  brightness = receivedString.toInt();
-  setBright();
-  
-  receivedString = "";
+    for (int i=0;i<length;i++) {
+     receivedString += (char)payload[i];
+    }
+
+    colortemp = receivedString.toInt();
+    Serial.println("Colortemp: " + String(colortemp));
+
+    receivedString = "";
   }
  }
 
 void reconnect() {
 
- // Loop until we're reconnected
- while (!client.connected()) {
- Serial.print("Attempting MQTT connection...");
+  // loop until reconnected
+  while (!client.connected()) 
+  {
+    Serial.print("Attempting MQTT connection...");
 
- // Attempt to connect
- if (client.connect("espDesktop", user, passw)) {
-  Serial.println("connected");
-  // ... and subscribe to topic
-  client.subscribe("home/office/desk/deskesp/switch");
-  client.subscribe("home/office/desk/deskesp/brightness");
-  
- } else {
-  Serial.print("failed, rc=");
-  Serial.print(client.state());
-  Serial.println(" try again in 5 seconds");
-  // Wait 5 seconds before retrying
-  delay(5000);
+    // attempt to connect
+    if (client.connect("espDesktop", user, passw)) 
+    {
+      Serial.println("connected");
+      // subscribe to topic
+      client.subscribe("home/office/desk/deskesp/colortemp_ha");
+      client.subscribe("home/office/desk/deskesp/brightness_ha");
+      client.subscribe("home/office/desk/deskesp/switch_ha");
+    } 
+    else 
+    {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // wait before retrying
+      delay(5000);
+    }
   }
- }
 }
 
 
@@ -228,7 +275,8 @@ void setup() {
   WiFi.hostname("espDesktop");
   WiFi.begin(ssid, password);
   
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED) 
+  {
     delay(500);
     Serial.println("Connecting to WiFi..");
   }
@@ -236,39 +284,31 @@ void setup() {
 
   // MQTT 
   client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
-
+  client.setCallback(callback);  
 }
 
 void loop() {
 
+  // push initial values after reboot
+  if ((reboot == true) && (client.connected())){
+    Serial.println("update values");
+    ha_update_brightness();
+    ha_update_colortemp();
+    reboot = false;
+  }
+
   // check values and update HA-state
   if ((brightness != brightness_HA) && (millis() > (enc1_valset + 400))){
-
-    String helpVal = (String)brightness;
-    char feedback[10];
-    helpVal.toCharArray(feedback, 10);
-    client.publish("home/office/desk/deskesp/brightness_val", feedback);
-    brightness_HA = brightness;
+    ha_update_brightness();    
   }
 
   if ((colortemp != colortemp_HA) && (millis() > (enc2_valset + 400))){
-
-    String helpVal = (String)colortemp;
-    char feedback[10];
-    helpVal.toCharArray(feedback, 10);
-    client.publish("home/office/desk/deskesp/colortemp_val", feedback);
-    colortemp_HA = colortemp;
+    ha_update_colortemp();
   }
-
-  
-  
-
 
 
   if (!client.connected()){
    reconnect();
   }
   client.loop();
-
 }

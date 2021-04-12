@@ -1,3 +1,6 @@
 {
-    "python.pythonPath": "C:\\Users\\kaibs\\AppData\\Local\\Programs\\Python\\Python38-32\\python3.exe"
+    "python.pythonPath": "C:\\Users\\kaibs\\AppData\\Local\\Programs\\Python\\Python38-32\\python3.exe",
+    "files.associations": {
+        "*.yaml": "home-assistant"
+    }
 }
