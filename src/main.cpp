@@ -21,27 +21,25 @@ String receivedString;
 
 //------------ pin config -----------------------------
 
-// Encoder 1
-// Button: D5 -> 14
+// Encoder 1 (brightness)
+// Button: D1 -> 5
 // pin1: D6 -> 12
 // pin2: D7 -> 13
-const int enc1_button = 14;
+const int enc1_button = 5;
 const int enc1_p1 = 12;
 const int enc1_p2 = 13;
 
-// Encoder 2
-// Button: D1 -> 5
+// Encoder 2 (colortemp)
 // pin1: D2 -> 4
 // pin2: D3 -> 0
-const int enc2_button = 5;
 const int enc2_p1 = 4;
 const int enc2_p2 = 0;
 
 // LEDs
-// D0 -> 16
 // D8 -> 15
-//const int ww_led = 16; //warm white
-//const int cw_led = 15; //cold white 
+// D5 -> 14
+const int ww_led = 14; //warm white
+const int cw_led = 15; //cold white 
 
 //------------- intial values --------------------------
 
@@ -52,14 +50,17 @@ int colortemp_HA = 50;
 // initial brightness [0,100]
 int brightness = 40;
 int brightness_HA = 40;
+int old_brightness = 40;
 
 // state change
 String light_state = "OFF";
+String light_state_ha = "OFF";
 
 // Encoder 1
 int encoder1Val = 0;
 long enc1_valset = 0;
 long last_button1 = 0;
+long button_valset = 0;
 
 // Encoder 2
 int encoder2Val = 0;
@@ -69,134 +70,8 @@ long last_button2 = 0;
 // var for setting initial values in HA after reboot
 boolean reboot = true;
 
-// ------------ fcns led control -----------------------
 
-// set MOSFET-outputs according to set vals
-void set_leds() {
-
-
-  // relation ww <-> cw
-  int relation = colortemp - 50;
-
-  //Serial.println("relation: " + String(relation));
-
-  // determine relative values for current colortemp
-  int cw_val = 0;
-  int ww_val = 0;
-  cw_val = 50 - relation;
-  ww_val = 50 + relation;
-
-  //Serial.println("CWv: " + String(cw_val) + "  WWv: " + String(ww_val));
-  //Serial.println("brightness: " + String(brightness));
-
-  // calc output vals according to current brightness
-  int rel_cw = int(cw_val*(brightness));
-  int rel_ww = int(ww_val*(brightness));
-
-  int cw_out = map(rel_cw, 0, 10000, 0, 255);
-  int ww_out = map(rel_ww, 0, 10000, 0, 255);
-
-  // set vals
-  //digitalWrite(cw_led, cw_out);
-  //digitalWrite(ww_led, ww_out);
-
-  Serial.println("CW: " + String(cw_out) + "  WW: " + String(ww_out));
-}
-
-//------------- fcns encoders --------------------------
-
-// brightness-encoder
-void IRAM_ATTR isr_encoder1() {
-
-  if (digitalRead(enc1_p2) == HIGH)
-    {
-      //clockwise
-      if (brightness < 99){
-        brightness += 2;
-      } else{
-        brightness = 100;
-      }   
-    } 
-  else 
-    {
-      //anticlockwise
-      if (brightness > 1){
-        brightness -= 2;
-      } else{
-        brightness = 0;
-      }  
-    }
-
-  enc1_valset = millis();
-  //Serial.println("Brightness: " + String(brightness));
-  set_leds();
-}
-
-
-// button brightness-encoder
-void IRAM_ATTR isr_button1() {
-
-  long cTime = millis();
-  if (cTime >= (last_button1 + 50)){
-
-    if (light_state == "OFF"){
-      light_state = "ON";
-    } else if (light_state == "ON"){
-      light_state = "OFF";
-    }
-    
-    char feedback[10];
-    light_state.toCharArray(feedback, 10);
-    client.publish("home/office/desk/deskesp/switch_mqtt", feedback);
-
-    Serial.println("State: " + light_state);
-
-    last_button1 = cTime;
-  }
-}
-
-
-// colortemp-encoder
-void IRAM_ATTR isr_encoder2() {
-
-  if (digitalRead(enc2_p2) == HIGH)
-    {
-      //clockwise
-      if (colortemp < 99){
-        colortemp += 2;
-      } else{
-        colortemp = 100;
-      }
-    } 
-  else 
-    {
-      //anticlockwise
-      if (colortemp > 1){
-        colortemp -= 2;
-      } else{
-        colortemp = 0;
-      } 
-    }
-
-  enc2_valset = millis();
-  //Serial.println("Colortemp: " + String(colortemp));
-  set_leds();
-}
-
-
-// button colortemp-encoder
-void IRAM_ATTR isr_button2() {
-
-  long cTime = millis();
-  if (cTime >= (last_button2 + 50))
-  {
-    Serial.println("BUTTON 2");
-    last_button2 = cTime;
-  }
-}
-
-
-// ----------------------------------- fcns mqtt ------------------------------------------------------
+// ------------ fcns state updates ---------------------
 
 // update brightness in HA
 void ha_update_brightness(){
@@ -218,6 +93,142 @@ void ha_update_colortemp(){
 }
 
 
+void ha_update_state(){
+  char feedback[10];
+  light_state.toCharArray(feedback, 10);
+  client.publish("home/office/desk/deskesp/switch_mqtt", feedback);
+  light_state_ha = light_state;
+}
+
+// change state if boundary crossed while dimming
+void check_state(int old_bright, int new_bright){
+
+  if (old_bright != new_bright){
+  
+    if ((old_bright == 0) && (new_bright > 0))
+    {
+      light_state = "ON";
+    }
+
+    if ((old_bright > 0) && (new_bright == 0))
+    {
+      light_state = "OFF";
+    }
+  }
+}
+
+// set MOSFET-outputs according to set vals
+void set_leds() {
+
+  // relation ww <-> cw
+  int relation = colortemp - 50;
+
+  // determine relative values for current colortemp
+  int cw_val = 0;
+  int ww_val = 0;
+  cw_val = 50 - relation;
+  ww_val = 50 + relation;
+
+  // calc output vals according to current brightness
+  int rel_cw = int(cw_val*(brightness));
+  int rel_ww = int(ww_val*(brightness));
+
+  int cw_out = map(rel_cw, 0, 10000, 0, 255);
+  int ww_out = map(rel_ww, 0, 10000, 0, 255);
+
+  // set vals
+  if (light_state == "ON"){
+    analogWrite(cw_led, cw_out);
+    analogWrite(ww_led, ww_out);
+  }
+  if (light_state == "OFF"){
+    analogWrite(cw_led, 0);
+    analogWrite(ww_led, 0);
+  }
+}
+
+//------------- fcns encoders --------------------------
+
+// brightness-encoder
+void IRAM_ATTR isr_encoder1() {
+
+  old_brightness = brightness;
+
+  if (digitalRead(enc1_p2) == HIGH)
+    {
+      //clockwise
+      if (brightness < 99){
+        brightness += 2;
+      } else{
+        brightness = 100;
+      }   
+    } 
+  else 
+    {
+      //anticlockwise
+      if (brightness > 4){
+        brightness -= 2;
+      } else{
+        brightness = 0;
+      }  
+    }
+
+  enc1_valset = millis();
+  check_state(old_brightness, brightness);
+  set_leds();
+}
+
+
+// button brightness-encoder
+void IRAM_ATTR isr_button1() {
+
+  long cTime = millis();
+  if (cTime >= (last_button1 + 50)){
+
+    if (light_state == "OFF"){
+      light_state = "ON";
+    } else if (light_state == "ON"){
+      light_state = "OFF";
+    }
+    
+    set_leds();
+    //char feedback[10];
+    //light_state.toCharArray(feedback, 10);
+    //client.publish("home/office/desk/deskesp/switch_mqtt", feedback);
+    last_button1 = cTime;
+    button_valset = millis();
+  }
+}
+
+
+// colortemp-encoder
+void IRAM_ATTR isr_encoder2() {
+
+  if (digitalRead(enc2_p2) == HIGH)
+    {
+      //clockwise
+      if (colortemp < 99){
+        colortemp += 2;
+      } else{
+        colortemp = 100;
+      }
+    } 
+  else 
+    {
+      //anticlockwise
+      if (colortemp > 4){
+        colortemp -= 2;
+      } else{
+        colortemp = 0;
+      } 
+    }
+
+  enc2_valset = millis();
+  set_leds();
+}
+
+// ----------------------------------- fcns mqtt ------------------------------------------------------
+
 // Callback MQTT
 void callback(char* topic, byte* payload, unsigned int length) {
  
@@ -227,24 +238,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
     }
 
     light_state = receivedString;
-    Serial.println("State: " + light_state);
-
-    char feedback[10];
-    light_state.toCharArray(feedback, 10);
-    client.publish("home/office/desk/deskesp/switch_mqtt", feedback);
-
+    set_leds();
+    ha_update_state();
     receivedString = "";
   }
 
   if (strcmp(topic,"home/office/desk/deskesp/brightness_ha")==0){
+
+    old_brightness = brightness;
    
     for (int i=0;i<length;i++) {
      receivedString += (char)payload[i];
     }
 
     brightness = receivedString.toInt();
-    Serial.println("Brightness: " + String(brightness));
-
+    check_state(old_brightness, brightness);
+    set_leds();
     receivedString = "";
   }
 
@@ -255,8 +264,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     }
 
     colortemp = receivedString.toInt();
-    Serial.println("Colortemp: " + String(colortemp));
-
+    set_leds();
     receivedString = "";
   }
  }
@@ -294,8 +302,8 @@ void setup() {
   Serial.begin(9600);
   
   // MOSFETs LEDs
-  //pinMode(ww_led, OUTPUT); 
-  //pinMode(cw_led, OUTPUT); 
+  pinMode(ww_led, OUTPUT); 
+  pinMode(cw_led, OUTPUT); 
 
   // Encoder 1
   pinMode(enc1_p1, INPUT_PULLUP);
@@ -307,9 +315,7 @@ void setup() {
   // Encoder 2
   pinMode(enc2_p1, INPUT_PULLUP);
   pinMode(enc2_p2, INPUT_PULLUP);
-  pinMode(enc2_button, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(enc2_p1), isr_encoder2, FALLING);
-  attachInterrupt(digitalPinToInterrupt(enc2_button), isr_button2, RISING);
   
   // Wifi
   WiFi.hostname("espDesktop");
@@ -338,14 +344,17 @@ void loop() {
   }
 
   // check values and update HA-state
-  if ((brightness != brightness_HA) && (millis() > (enc1_valset + 400))){
+  if ((brightness != brightness_HA) && (millis() > (enc1_valset + 300))){
     ha_update_brightness();    
   }
 
-  if ((colortemp != colortemp_HA) && (millis() > (enc2_valset + 400))){
+  if ((colortemp != colortemp_HA) && (millis() > (enc2_valset + 300))){
     ha_update_colortemp();
   }
 
+  if ((light_state != light_state_ha) && (millis() > (button_valset + 300))){
+    ha_update_state();
+  }
 
   // check mqtt connection
   if (!client.connected()){
