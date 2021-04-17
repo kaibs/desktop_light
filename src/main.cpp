@@ -32,8 +32,8 @@ const int enc1_p2 = 13;
 // Encoder 2 (colortemp)
 // pin1: D2 -> 4
 // pin2: D3 -> 0
-const int enc2_p1 = 4;
-const int enc2_p2 = 0;
+const int enc2_p1 = 0;
+const int enc2_p2 = 4;
 
 // LEDs
 // D8 -> 15
